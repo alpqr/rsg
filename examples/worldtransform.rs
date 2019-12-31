@@ -93,6 +93,7 @@ fn main() {
     let mut d = Default::default();
     let mut opaque_list = vec![];
     let mut alpha_list = vec![];
+    let mut work_list = vec![];
     let pool = scoped_pool::Pool::new(4);
 
     for stage in 0..9 {
@@ -110,7 +111,7 @@ fn main() {
             println!("  roots for subtrees with dirty inherited opacity: {:?}", obs.dirty_opacity_roots);
             let timestamp = std::time::Instant::now();
             prepare_scene(&mut d.components, &scene, &obs.dirty_world_roots, &obs.dirty_opacity_roots,
-                &mut opaque_list, &mut alpha_list, &pool);
+                &mut opaque_list, &mut alpha_list, &mut work_list, &pool);
             println!("  inherited property update took {} microseconds", timestamp.elapsed().as_micros());
             obs.reset();
             d.components.print_scene(&scene, d.root_key.unwrap(), Some(5));

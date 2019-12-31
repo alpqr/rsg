@@ -2,7 +2,6 @@ use rsg::scene::*;
 use rsg::components::*;
 use rsg::observer::*;
 use rsg::camera::*;
-use rsg::viewport::*;
 use rsg::material::*;
 use rsg::mesh::*;
 use nalgebra_glm as glm;
@@ -24,12 +23,12 @@ fn make_camera(components: &mut RSGComponentContainer, local_transform: glm::Mat
         .links())
 }
 
-fn make_viewport(components: &mut RSGComponentContainer, rect: RSGViewportRect, camera_node_key: RSGNodeKey)
+fn make_viewport(components: &mut RSGComponentContainer, camera_node_key: RSGNodeKey)
     -> RSGNode<RSGComponentLinks>
 {
     RSGNode::with_component_links(
         RSGComponentBuilder::new(components)
-        .viewport(rect, Some(camera_node_key))
+        .viewport(None, Some(camera_node_key))
         .links())
 }
 
@@ -112,6 +111,7 @@ struct Data {
     shader_sets: ShaderSets,
     opaque_list: RSGRenderList,
     alpha_list: RSGRenderList,
+    work_list: Vec<RSGNodeKey>,
     root_key: RSGNodeKey,
     frame_count: u32
 }
@@ -127,9 +127,7 @@ fn sync(d: &mut Data, scene: &mut Scene) {
                 near: 0.01,
                 far: 1000.0
             })));
-        let vp_key = scene.append(d.root_key, make_viewport(&mut d.components,
-            RSGViewportRect { x: 0, y: 0, w: 800, h: 600 },
-            cam_key));
+        let vp_key = scene.append(d.root_key, make_viewport(&mut d.components, cam_key));
 
         let mut transaction = RSGSubtreeAddTransaction::new();
         let tri1_key = scene.append_with_transaction(vp_key, make_triangle(&mut d.components, &mut d.mesh_buffers, &mut d.shader_sets,
@@ -147,7 +145,7 @@ fn prepare(d: &mut Data, scene: &Scene, observer: &RSGSceneObserver, pool: &scop
     if observer.changed {
         prepare_scene(&mut d.components, &scene,
             &observer.dirty_world_roots, &observer.dirty_opacity_roots,
-            &mut d.opaque_list, &mut d.alpha_list,
+            &mut d.opaque_list, &mut d.alpha_list, &mut d.work_list,
             &pool);
         d.components.print_scene(&scene, d.root_key, Some(10));
     }

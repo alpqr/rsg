@@ -167,7 +167,7 @@ impl<'a> RSGComponentBuilder<'a> {
         self
     }
 
-    pub fn viewport(&mut self, rect: RSGViewportRect, camera_node_key: Option<RSGNodeKey>) -> &mut Self {
+    pub fn viewport(&mut self, rect: Option<RSGViewportRect>, camera_node_key: Option<RSGNodeKey>) -> &mut Self {
         self.links.viewport_key = Some(self.container.viewports.insert(RSGViewportComponent::new(rect, camera_node_key)));
         self
     }
@@ -230,6 +230,7 @@ pub fn prepare_scene<ObserverT>(
     dirty_opacity_roots: &[RSGNodeKey],
     opaque_list: &mut RSGRenderList,
     alpha_list: &mut RSGRenderList,
+    work_list: &mut Vec<RSGNodeKey>,
     pool: &scoped_pool::Pool)
     where ObserverT: RSGObserver + Sync
 {
@@ -242,27 +243,29 @@ pub fn prepare_scene<ObserverT>(
             });
         }
 
+        work_list.clear();
         let (viewport_tx, viewport_rx) = std::sync::mpsc::channel();
         scope.execute(move || {
-            let mut renderables: smallvec::SmallVec<[RSGNodeKey; 64]> = smallvec::smallvec![];
-            let mut viewports: smallvec::SmallVec<[(RSGNodeKey, usize); 8]> = smallvec::smallvec![];
+            let renderable_candidates = work_list;
+            let mut viewport_nodes: smallvec::SmallVec<[(RSGNodeKey, usize); 16]> = smallvec::smallvec![];
             for (key, node) in scene.iter() {
                 if node.get_component_links().viewport_key.is_some() {
                     let mut renderable_count: usize = 0;
                     for (child_key, _) in scene.traverse(key) {
                         let child_links = scene.get_component_links(child_key);
-                        // if child_links.viewport_key.is_some() && child_key != key {
-                        //     ???
-                        // }
+                        if child_links.viewport_key.is_some() && child_key != key {
+                            // ###
+                            unimplemented!();
+                        }
                         if child_links.mesh_key.is_some() && child_links.transform_key.is_some() {
-                            renderables.push(child_key);
+                            renderable_candidates.push(child_key);
                             renderable_count += 1;
                         }
                     }
-                    viewports.push((key, renderable_count));
+                    viewport_nodes.push((key, renderable_count));
                 }
             }
-            viewport_tx.send((renderables, viewports)).unwrap();
+            viewport_tx.send((renderable_candidates, viewport_nodes)).unwrap();
         });
 
         for subtree_root_key in dirty_world_roots {
@@ -292,15 +295,15 @@ pub fn prepare_scene<ObserverT>(
         if !dirty_opacity_roots.is_empty() {
             components.opacities = opacity_rx.recv().unwrap();
         }
-        let (renderables, viewports) = viewport_rx.recv().unwrap();
+        let (renderable_candidates, viewport_nodes) = viewport_rx.recv().unwrap();
 
-        for (viewport_node_key, renderable_count) in &viewports {
+        for (viewport_node_key, renderable_count) in &viewport_nodes {
             let viewport_key = scene.get_component_links(*viewport_node_key).viewport_key.unwrap();
             if let Some(cam_node_key) = components.viewports[viewport_key].camera_node_key {
                 let cam_links = scene.get_component_links(cam_node_key);
                 let cam_props = components.cameras[cam_links.camera_key.unwrap()].world_properties;
                 for i in renderable_idx..renderable_idx + renderable_count {
-                    let key = renderables[i];
+                    let key = renderable_candidates[i];
                     let links = scene.get_component_links(key);
                     components.meshes[links.mesh_key.unwrap()].viewport_node_key = Some(*viewport_node_key);
                     let sort_dist = calculate_sorting_distance(
@@ -319,7 +322,7 @@ pub fn prepare_scene<ObserverT>(
                 }
             } else {
                 for i in renderable_idx..renderable_idx + renderable_count {
-                    components.meshes[scene.get_component_links(renderables[i]).mesh_key.unwrap()].viewport_node_key = None;
+                    components.meshes[scene.get_component_links(renderable_candidates[i]).mesh_key.unwrap()].viewport_node_key = None;
                 }
             }
             renderable_idx += renderable_count;
