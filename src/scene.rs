@@ -610,6 +610,14 @@ impl<CompLinksT, ObserverT> RSGScene<CompLinksT, ObserverT> where CompLinksT: De
         }
     }
 
+    pub fn iter(&self) -> slotmap::Iter<RSGNodeKey, RSGNode<CompLinksT>> {
+        self.arena.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> slotmap::IterMut<RSGNodeKey, RSGNode<CompLinksT>> {
+        self.arena.iter_mut()
+    }
+
     pub fn mark_dirty(&mut self, node_key: RSGNodeKey, flags: RSGDirtyFlags) {
         self.notify(RSGEvent::Dirty(node_key, flags));
     }

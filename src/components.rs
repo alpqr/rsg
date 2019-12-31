@@ -59,6 +59,13 @@ impl RSGComponentContainer {
         }
     }
 
+    pub fn is_renderable(&self, links: &RSGComponentLinks) -> bool {
+        match links.mesh_key {
+            Some(_) => true,
+            None => false
+        }
+    }
+
     pub fn is_opaque(&self, links: &RSGComponentLinks) -> bool {
         if let Some(opacity_key) = links.opacity_key {
             if self.opacities[opacity_key].inherited_opacity < 1.0 {
@@ -244,6 +251,7 @@ pub fn update_inherited_properties<ObserverT>(
             });
         }
 
+        let mut viewport_node_keys: smallvec::SmallVec<[RSGNodeKey; 16]> = smallvec::smallvec![];
         for subtree_root_key in dirty_world_roots {
             for (key, _) in scene.traverse(*subtree_root_key) {
                 let links = scene.get_component_links(key);
@@ -261,29 +269,31 @@ pub fn update_inherited_properties<ObserverT>(
                         components.cameras[camera_key].world_properties = cam_prop;
                     }
                 }
+                if links.viewport_key.is_some() {
+                    viewport_node_keys.push(key);
+                }
             }
 
-            for (viewport_node_key, _) in scene.traverse(*subtree_root_key) {
-                if let Some(viewport_key) = scene.get_component_links(viewport_node_key).viewport_key {
-                    let cam_links = scene.get_component_links(components.viewports[viewport_key].camera_node_key);
-                    let cam_props = components.cameras[cam_links.camera_key.unwrap()].world_properties;
-                    for (key, _) in scene.traverse(viewport_node_key) {
-                        let links = scene.get_component_links(key);
-                        if let Some(mesh_key) = links.mesh_key {
-                            let mesh_component = &mut components.meshes[mesh_key];
-                            match links.transform_key {
-                                Some(transform_key) => {
-                                    let dist = calculate_sorting_distance(
-                                        &components.transforms[transform_key].world_transform,
-                                        &components.mesh_data[mesh_key].bounds,
-                                        &cam_props);
-                                    mesh_component.sorting_distance = dist;
-                                    mesh_component.viewport_node_key = Some(viewport_node_key);
-                                }
-                                _ => {
-                                    mesh_component.sorting_distance = 0.0;
-                                    mesh_component.viewport_node_key = None;
-                                }
+            for viewport_node_key in &viewport_node_keys {
+                let viewport_key = scene.get_component_links(*viewport_node_key).viewport_key.unwrap();
+                let cam_links = scene.get_component_links(components.viewports[viewport_key].camera_node_key);
+                let cam_props = components.cameras[cam_links.camera_key.unwrap()].world_properties;
+                for (key, _) in scene.traverse(*viewport_node_key) {
+                    let links = scene.get_component_links(key);
+                    if let Some(mesh_key) = links.mesh_key {
+                        let mesh_component = &mut components.meshes[mesh_key];
+                        match links.transform_key {
+                            Some(transform_key) => {
+                                let dist = calculate_sorting_distance(
+                                    &components.transforms[transform_key].world_transform,
+                                    &components.mesh_data[mesh_key].bounds,
+                                    &cam_props);
+                                mesh_component.sorting_distance = dist;
+                                mesh_component.viewport_node_key = Some(*viewport_node_key);
+                            }
+                            _ => {
+                                mesh_component.sorting_distance = 0.0;
+                                mesh_component.viewport_node_key = None;
                             }
                         }
                     }

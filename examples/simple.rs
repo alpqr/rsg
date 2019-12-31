@@ -39,7 +39,7 @@ fn make_color_material(shader_sets: &mut ShaderSets) -> RSGMaterial {
 
     if !shader_sets.contains_key(&COLOR_SH_ID) {
         let shader_set = RSGMaterialShaderSet {
-            vertex_shader: "".to_owned(), // ###
+            vertex_shader: "".to_owned(),
             fragment_shader: "".to_owned(),
             properties: vec![
                 RSGMaterialProperty::Mat4(mvp_name.clone(), glm::one()),
@@ -105,11 +105,15 @@ fn make_triangle(components: &mut RSGComponentContainer, buffers: &mut MeshBuffe
         .links())
 }
 
+type RenderList = Vec<(RSGNodeKey, f32)>;
+
 #[derive(Default)]
 struct Data {
     components: RSGComponentContainer,
     mesh_buffers: MeshBuffers,
     shader_sets: ShaderSets,
+    opaque_list: RenderList,
+    alpha_list: RenderList,
     root_key: RSGNodeKey,
     frame_count: u32
 }
@@ -143,19 +147,38 @@ fn sync(d: &mut Data, scene: &mut Scene) {
 fn prepare(d: &mut Data, scene: &Scene, observer: &RSGSceneObserver, pool: &scoped_pool::Pool) {
     println!("Frame {} prepare, changes={:?}", d.frame_count, observer);
     if observer.changed {
-        update_inherited_properties(&mut d.components, &scene,
-            &observer.dirty_world_roots, &observer.dirty_opacity_roots, &pool);
+        if !observer.dirty_world_roots.is_empty() || !observer.dirty_opacity_roots.is_empty() {
+            update_inherited_properties(&mut d.components, &scene,
+                &observer.dirty_world_roots, &observer.dirty_opacity_roots, &pool);
+        }
         d.components.print_scene(&scene, d.root_key, Some(10));
     }
-    if observer.hierarchy_changed {
-        // ###
-        // rebuild opaque render list
-        // rebuild alpha render list
+    if observer.hierarchy_changed { // incorrect condition but will do for now
+        d.opaque_list.clear();
+        d.alpha_list.clear();
+        for (key, node) in scene.iter() {
+            let links = node.get_component_links();
+            if d.components.is_renderable(links) {
+                let sort_dist = d.components.meshes[links.mesh_key.unwrap()].sorting_distance;
+                if d.components.is_opaque(links) {
+                    // front to back
+                    let pos = d.opaque_list.binary_search_by(|e| e.1.partial_cmp(&sort_dist).unwrap()).unwrap_or_else(|i| i);
+                    d.opaque_list.insert(pos, (key, sort_dist));
+                } else {
+                    // back to front
+                    let pos = d.alpha_list.binary_search_by(|e| sort_dist.partial_cmp(&e.1).unwrap()).unwrap_or_else(|i| i);
+                    d.alpha_list.insert(pos, (key, sort_dist));
+                }
+            }
+        }
     }
 }
 
 fn render(d: &mut Data, _scene: &Scene) {
-    println!("Frame {} render", d.frame_count);
+    println!("Frame {} render, opaque count={} alpha count={}",
+        d.frame_count, d.opaque_list.len(), d.alpha_list.len());
+    println!("  Opaque list={:?}", d.opaque_list);
+    println!("  Alpha list={:?}", d.alpha_list);
 }
 
 fn frame(d: &mut Data, scene: &mut Scene, pool: &scoped_pool::Pool) {

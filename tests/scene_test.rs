@@ -696,6 +696,12 @@ fn traversal() {
         assert!(depth == expected_depth[n]);
         n += 1;
     }
+
+    let expected = [root_key, node1_key, node2_key, node11_key, node12_key, node21_key];
+    for (i, (k, _)) in scene.iter().enumerate() {
+        println!("{} {:?}", i, k);
+        assert!(expected[i] == k);
+    }
 }
 
 #[test]
