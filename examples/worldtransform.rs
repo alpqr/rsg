@@ -91,6 +91,8 @@ fn main() {
     let mut scene = Scene::new();
     let mut obs = RSGSceneObserver::new();
     let mut d = Default::default();
+    let mut opaque_list = vec![];
+    let mut alpha_list = vec![];
     let pool = scoped_pool::Pool::new(4);
 
     for stage in 0..9 {
@@ -107,7 +109,8 @@ fn main() {
             println!("  roots for subtrees with dirty world transform: {:?}", obs.dirty_world_roots);
             println!("  roots for subtrees with dirty inherited opacity: {:?}", obs.dirty_opacity_roots);
             let timestamp = std::time::Instant::now();
-            update_inherited_properties(&mut d.components, &scene, &obs.dirty_world_roots, &obs.dirty_opacity_roots, &pool);
+            prepare_scene(&mut d.components, &scene, &obs.dirty_world_roots, &obs.dirty_opacity_roots,
+                &mut opaque_list, &mut alpha_list, &pool);
             println!("  inherited property update took {} microseconds", timestamp.elapsed().as_micros());
             obs.reset();
             d.components.print_scene(&scene, d.root_key.unwrap(), Some(5));

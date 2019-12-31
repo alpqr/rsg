@@ -59,13 +59,6 @@ impl RSGComponentContainer {
         }
     }
 
-    pub fn is_renderable(&self, links: &RSGComponentLinks) -> bool {
-        match links.mesh_key {
-            Some(_) => true,
-            None => false
-        }
-    }
-
     pub fn is_opaque(&self, links: &RSGComponentLinks) -> bool {
         if let Some(opacity_key) = links.opacity_key {
             if self.opacities[opacity_key].inherited_opacity < 1.0 {
@@ -114,9 +107,8 @@ impl RSGComponentContainer {
             if let Some(mesh_key) = component_links.mesh_key {
                 let mesh_component = self.meshes[mesh_key];
                 let mesh = &self.mesh_data[mesh_key];
-                println!("{}    mesh submesh count={} bounds={} active viewport={:?} sort dist={}",
-                    indent, mesh.submeshes.len(), mesh.bounds,
-                    mesh_component.viewport_node_key, mesh_component.sorting_distance);
+                println!("{}    mesh submesh count={} bounds={} viewport={:?}",
+                    indent, mesh.submeshes.len(), mesh.bounds, mesh_component.viewport_node_key);
             }
 
             if let Some(camera_key) = component_links.camera_key {
@@ -126,7 +118,7 @@ impl RSGComponentContainer {
 
             if let Some(viewport_key) = component_links.viewport_key {
                 let v = &self.viewports[viewport_key];
-                println!("{}    viewport rect={:?} active camera={:?}",
+                println!("{}    viewport rect={:?} camera={:?}",
                     indent, v.rect, v.camera_node_key);
             }
         }
@@ -175,7 +167,7 @@ impl<'a> RSGComponentBuilder<'a> {
         self
     }
 
-    pub fn viewport(&mut self, rect: RSGViewportRect, camera_node_key: RSGNodeKey) -> &mut Self {
+    pub fn viewport(&mut self, rect: RSGViewportRect, camera_node_key: Option<RSGNodeKey>) -> &mut Self {
         self.links.viewport_key = Some(self.container.viewports.insert(RSGViewportComponent::new(rect, camera_node_key)));
         self
     }
@@ -229,29 +221,50 @@ fn update_inherited_opacities<ObserverT>(
     opacities
 }
 
-// calculates (for component):
-//   - world transform (transform)
-//   - world position/direction (camera)
-//   - sorting distance, active viewport (mesh)
-//   - inherited opacity (opacity)
-pub fn update_inherited_properties<ObserverT>(
+pub type RSGRenderList = Vec<(RSGNodeKey, f32)>;
+
+pub fn prepare_scene<ObserverT>(
     components: &mut RSGComponentContainer,
     scene: &RSGScene<RSGComponentLinks, ObserverT>,
     dirty_world_roots: &[RSGNodeKey],
     dirty_opacity_roots: &[RSGNodeKey],
+    opaque_list: &mut RSGRenderList,
+    alpha_list: &mut RSGRenderList,
     pool: &scoped_pool::Pool)
     where ObserverT: RSGObserver + Sync
 {
     pool.scoped(|scope| {
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (opacity_tx, opacity_rx) = std::sync::mpsc::channel();
         if !dirty_opacity_roots.is_empty() {
             let opacities = std::mem::replace(&mut components.opacities, Default::default());
             scope.execute(move || {
-                tx.send(update_inherited_opacities(opacities, scene, dirty_opacity_roots)).unwrap();
+                opacity_tx.send(update_inherited_opacities(opacities, scene, dirty_opacity_roots)).unwrap();
             });
         }
 
-        let mut viewport_node_keys: smallvec::SmallVec<[RSGNodeKey; 16]> = smallvec::smallvec![];
+        let (viewport_tx, viewport_rx) = std::sync::mpsc::channel();
+        scope.execute(move || {
+            let mut renderables: smallvec::SmallVec<[RSGNodeKey; 64]> = smallvec::smallvec![];
+            let mut viewports: smallvec::SmallVec<[(RSGNodeKey, usize); 8]> = smallvec::smallvec![];
+            for (key, node) in scene.iter() {
+                if node.get_component_links().viewport_key.is_some() {
+                    let mut renderable_count: usize = 0;
+                    for (child_key, _) in scene.traverse(key) {
+                        let child_links = scene.get_component_links(child_key);
+                        // if child_links.viewport_key.is_some() && child_key != key {
+                        //     ???
+                        // }
+                        if child_links.mesh_key.is_some() && child_links.transform_key.is_some() {
+                            renderables.push(child_key);
+                            renderable_count += 1;
+                        }
+                    }
+                    viewports.push((key, renderable_count));
+                }
+            }
+            viewport_tx.send((renderables, viewports)).unwrap();
+        });
+
         for subtree_root_key in dirty_world_roots {
             for (key, _) in scene.traverse(*subtree_root_key) {
                 let links = scene.get_component_links(key);
@@ -269,40 +282,47 @@ pub fn update_inherited_properties<ObserverT>(
                         components.cameras[camera_key].world_properties = cam_prop;
                     }
                 }
-                if links.viewport_key.is_some() {
-                    viewport_node_keys.push(key);
-                }
-            }
-
-            for viewport_node_key in &viewport_node_keys {
-                let viewport_key = scene.get_component_links(*viewport_node_key).viewport_key.unwrap();
-                let cam_links = scene.get_component_links(components.viewports[viewport_key].camera_node_key);
-                let cam_props = components.cameras[cam_links.camera_key.unwrap()].world_properties;
-                for (key, _) in scene.traverse(*viewport_node_key) {
-                    let links = scene.get_component_links(key);
-                    if let Some(mesh_key) = links.mesh_key {
-                        let mesh_component = &mut components.meshes[mesh_key];
-                        match links.transform_key {
-                            Some(transform_key) => {
-                                let dist = calculate_sorting_distance(
-                                    &components.transforms[transform_key].world_transform,
-                                    &components.mesh_data[mesh_key].bounds,
-                                    &cam_props);
-                                mesh_component.sorting_distance = dist;
-                                mesh_component.viewport_node_key = Some(*viewport_node_key);
-                            }
-                            _ => {
-                                mesh_component.sorting_distance = 0.0;
-                                mesh_component.viewport_node_key = None;
-                            }
-                        }
-                    }
-                }
             }
         }
 
+        opaque_list.clear();
+        alpha_list.clear();
+        let mut renderable_idx = 0;
+
         if !dirty_opacity_roots.is_empty() {
-            components.opacities = rx.recv().unwrap();
+            components.opacities = opacity_rx.recv().unwrap();
+        }
+        let (renderables, viewports) = viewport_rx.recv().unwrap();
+
+        for (viewport_node_key, renderable_count) in &viewports {
+            let viewport_key = scene.get_component_links(*viewport_node_key).viewport_key.unwrap();
+            if let Some(cam_node_key) = components.viewports[viewport_key].camera_node_key {
+                let cam_links = scene.get_component_links(cam_node_key);
+                let cam_props = components.cameras[cam_links.camera_key.unwrap()].world_properties;
+                for i in renderable_idx..renderable_idx + renderable_count {
+                    let key = renderables[i];
+                    let links = scene.get_component_links(key);
+                    components.meshes[links.mesh_key.unwrap()].viewport_node_key = Some(*viewport_node_key);
+                    let sort_dist = calculate_sorting_distance(
+                        &components.transforms[links.transform_key.unwrap()].world_transform,
+                        &components.mesh_data[links.mesh_key.unwrap()].bounds,
+                        &cam_props);
+                    if components.is_opaque(links) {
+                        // front to back
+                        let pos = opaque_list.binary_search_by(|e| e.1.partial_cmp(&sort_dist).unwrap()).unwrap_or_else(|i| i);
+                        opaque_list.insert(pos, (key, sort_dist));
+                    } else {
+                        // back to front
+                        let pos = alpha_list.binary_search_by(|e| sort_dist.partial_cmp(&e.1).unwrap()).unwrap_or_else(|i| i);
+                        alpha_list.insert(pos, (key, sort_dist));
+                    }
+                }
+            } else {
+                for i in renderable_idx..renderable_idx + renderable_count {
+                    components.meshes[scene.get_component_links(renderables[i]).mesh_key.unwrap()].viewport_node_key = None;
+                }
+            }
+            renderable_idx += renderable_count;
         }
     });
 }

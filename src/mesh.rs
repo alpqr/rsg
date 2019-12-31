@@ -7,14 +7,12 @@ slotmap::new_key_type! {
 
 #[derive(Clone, Copy)]
 pub struct RSGMeshComponent {
-    pub sorting_distance: f32,
     pub viewport_node_key: Option<RSGNodeKey>
 }
 
 impl RSGMeshComponent {
     pub fn new() -> Self {
         RSGMeshComponent {
-            sorting_distance: 0.0,
             viewport_node_key: None
         }
     }

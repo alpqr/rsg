@@ -15,11 +15,11 @@ pub struct RSGViewportRect {
 #[derive(Clone, Copy)]
 pub struct RSGViewportComponent {
     pub rect: RSGViewportRect,
-    pub camera_node_key: RSGNodeKey
+    pub camera_node_key: Option<RSGNodeKey>
 }
 
 impl RSGViewportComponent {
-    pub fn new(rect: RSGViewportRect, camera_node_key: RSGNodeKey) -> Self {
+    pub fn new(rect: RSGViewportRect, camera_node_key: Option<RSGNodeKey>) -> Self {
         RSGViewportComponent {
             rect: rect,
             camera_node_key: camera_node_key

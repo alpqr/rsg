@@ -9,6 +9,8 @@ bitflags::bitflags! {
         const MATERIAL = 0x04;
         const MATERIAL_VALUES = 0x08;
         const MESH = 0x10;
+        const CAMERA = 0x20;
+        const VIEWPORT = 0x40;
     }
 }
 
